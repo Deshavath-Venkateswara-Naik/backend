@@ -1,3 +1,4 @@
+import json
 from openai import OpenAI
 import os
 from dotenv import load_dotenv
@@ -6,6 +7,63 @@ from app.utils.categories import ALLOWED_CATEGORIES
 load_dotenv()
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+def categorize_freshdesk_tickets(tickets: list[dict]) -> dict:
+    """
+    Categorize a list of Freshdesk tickets using LLM.
+    Returns a dictionary mapping ticket IDs to their AI categories.
+    """
+    if not tickets:
+        return {}
+
+    categories_str = "\n".join(f"  - {cat}" for cat in ALLOWED_CATEGORIES)
+    
+    # Prepare ticket summaries for the prompt
+    ticket_summaries = []
+    for t in tickets:
+        ticket_summaries.append({
+            "id": t.get("id"),
+            "subject": t.get("subject"),
+            "description": t.get("description_text") or t.get("subject")
+        })
+
+    prompt = f"""
+You are a support ticket categorization assistant for Turito.
+Categorize the following Freshdesk tickets into the most appropriate category.
+
+ALLOWED CATEGORIES:
+{categories_str}
+
+TICKETS:
+{json.dumps(ticket_summaries, indent=2)}
+
+Return ONLY a JSON object mapping ticket IDs (as strings) to their categories:
+{{
+  "ticket_id": "category",
+  ...
+}}
+"""
+
+    print(f"\n--- [BACKEND] Categorizing {len(tickets)} Freshdesk Tickets ---")
+    
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant that categorizes support tickets into JSON mapping."},
+            {"role": "user", "content": prompt}
+        ],
+        response_format={ "type": "json_object" }
+    )
+
+    result_text = response.choices[0].message.content
+    try:
+        mapping = json.loads(result_text)
+        print(f"Categorization Complete. Mapped {len(mapping)} tickets.")
+        return mapping
+    except Exception as e:
+        print(f"Error parsing categorization JSON: {e}")
+        return {}
+
 
 def extract_ticket_fields(message, validate=True):
     categories_str = "\n".join(f"  - {cat}" for cat in ALLOWED_CATEGORIES)
